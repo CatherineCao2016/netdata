@@ -199,6 +199,12 @@ func TestRunFanoutCancellation(t *testing.T) {
 		provider string
 		cancel   bool
 	}{
+		"msteams cancel": {provider: "msteams", cancel: true}, "msteams deadline": {provider: "msteams"},
+		"matrix cancel": {provider: "matrix", cancel: true}, "matrix deadline": {provider: "matrix"},
+		"opsgenie create deadline": {provider: "opsgenie"}, "opsgenie create cancel": {provider: "opsgenie", cancel: true},
+		"opsgenie close deadline": {provider: "opsgenie-close"}, "opsgenie close cancel": {provider: "opsgenie-close", cancel: true},
+		"pagerduty v1 deadline": {provider: "pagerduty-v1"}, "pagerduty v1 cancel": {provider: "pagerduty-v1", cancel: true},
+		"pagerduty v2 deadline": {provider: "pagerduty-v2"}, "pagerduty v2 cancel": {provider: "pagerduty-v2", cancel: true},
 		"smseagle deadline": {provider: "smseagle"}, "smseagle cancellation": {provider: "smseagle", cancel: true},
 		"prowl deadline": {provider: "prowl"}, "prowl cancellation": {provider: "prowl", cancel: true},
 		"kavenegar deadline": {provider: "kavenegar"}, "kavenegar cancellation": {provider: "kavenegar", cancel: true},
@@ -218,8 +224,16 @@ func TestRunFanoutCancellation(t *testing.T) {
 			var afterCalls atomic.Int32
 			server := httptest.NewServer(
 				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					switch r.URL.Path {
-					case "/blocked/api/v2/messages/sms", "/blocked/add",
+					path := r.URL.Path
+					if strings.HasPrefix(path, "/blocked/_matrix/client/v3/rooms/") {
+						path = "/blocked"
+					}
+					switch path {
+					case "/blocked/v2/alerts", "/blocked/v2/alerts/" + opsgenieTestAlias + "/close",
+						"/blocked/generic/2010-04-15/create_event.json",
+						"/blocked/v2/enqueue",
+						"/blocked/api/v2/messages/sms",
+						"/blocked/add",
 						"/blocked/synthetic-key/sms/send.json",
 						"/blocked",
 						"/blocked/events",
@@ -243,6 +257,13 @@ func TestRunFanoutCancellation(t *testing.T) {
 			defer server.Close()
 			defer close(cleanup)
 			blocked := fmt.Sprintf("type: %s, url: %q", test.provider, server.URL+"/blocked")
+			if test.provider == "matrix" {
+				blocked = fmt.Sprintf(
+					"type: matrix, api_url: %q, access_token: synthetic-token, room_id: %q",
+					server.URL+"/blocked",
+					"!room:example.org",
+				)
+			}
 			if test.provider == "ilert" {
 				blocked = fmt.Sprintf("type: ilert, api_url: %q, integration_key: synthetic-key", server.URL+"/blocked")
 			}
@@ -253,6 +274,21 @@ func TestRunFanoutCancellation(t *testing.T) {
 				blocked = fmt.Sprintf(
 					"type: dynatrace, api_url: %q, api_token: synthetic-key, entity_selector: type(HOST)",
 					server.URL+"/blocked",
+				)
+			}
+			if strings.HasPrefix(test.provider, "pagerduty-v") {
+				blocked = fmt.Sprintf(
+					"type: pagerduty, api_url: %q, integration_key: %q, api_version: %s",
+					server.URL+"/blocked",
+					pagerDutyTestKey,
+					strings.TrimPrefix(test.provider, "pagerduty-v"),
+				)
+			}
+			if strings.HasPrefix(test.provider, "opsgenie") {
+				blocked = fmt.Sprintf(
+					"type: opsgenie, api_url: %q, api_key: %q",
+					server.URL+"/blocked",
+					opsgenieTestKey,
 				)
 			}
 			if test.provider == "smseagle" {
@@ -285,8 +321,12 @@ routing:
 			defer cancel()
 			var stdout, stderr bytes.Buffer
 			done := make(chan int, 1)
+			input := validEvent
+			if test.provider == "opsgenie-close" {
+				input = strings.ReplaceAll(input, "WARNING", "CLEAR")
+			}
 			go func() {
-				done <- Run(ctx, []string{"send", "--config", path, "--role", "sysadmin", "--timeout", "500ms"}, strings.NewReader(validEvent), &stdout, &stderr)
+				done <- Run(ctx, []string{"send", "--config", path, "--role", "sysadmin", "--timeout", "500ms"}, strings.NewReader(input), &stdout, &stderr)
 			}()
 			select {
 			case <-started:

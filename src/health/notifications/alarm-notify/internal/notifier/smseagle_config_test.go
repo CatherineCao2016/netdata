@@ -106,13 +106,19 @@ func TestSMSEagleFieldIsolation(t *testing.T) {
 		t.Run(field.Name, func(t *testing.T) {
 			dst := smseagleTestDestination()
 			v := reflect.ValueOf(&dst).Elem().Field(i)
-			if v.Kind() == reflect.String {
+			if v.Kind() == reflect.Map {
+				v.Set(reflect.ValueOf(map[string]string{"warning": "synthetic-private-value"}))
+			} else if v.Kind() == reflect.String {
 				v.SetString("synthetic-private-value")
 			} else {
 				n := configInteger(1)
 				v.Set(reflect.ValueOf(&n))
 			}
-			checkFormConfig(t, dst, "fields for another provider")
+			wantErr := "fields for another provider"
+			if field.Name == "APIVersion" {
+				wantErr = "api_version requires type: pagerduty"
+			}
+			checkFormConfig(t, dst, wantErr)
 		})
 	}
 	for provider := range map[string]struct{}{"webhook": {}, "slack": {}, "discord": {}, "telegram": {}, "pushover": {}, "pushbullet": {}, "twilio": {}, "messagebird": {}, "gotify": {}, "ntfy": {}, "rocketchat": {}, "flock": {}, "fleep": {}, "ilert": {}, "signl4": {}, "alerta": {}, "dynatrace": {}, "prowl": {}, "kavenegar": {}} {
